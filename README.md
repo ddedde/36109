@@ -1,5 +1,11 @@
 # Course Goals
 
+The goals of the course is to delve into some models that can not be handled by
+our core modeling class, mostly due to the constraint that the models are all done in Excel.   
+This leads us to learn Python, and showcase to the students an industrial strength modeling tool, and
+introduce them to other real-world tasks that can be performed with a language like Python.
+So, I see us as having some goals oriented towards Modeling, and some more Programming.
+
 MODELING
 - Discrete event simulation (the core modeling class only does Monte Carlo)
 - Network/Graphical models,  such as:
