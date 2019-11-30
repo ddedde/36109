@@ -11,28 +11,32 @@
 
 import simpy
 import numpy as np
+
 from collections import OrderedDict
 
 class Resource(simpy.Resource):
     def __init__(self, env, name='', service_time_generator=lambda:1, *args, **kwargs):
         super().__init__(env, *args, **kwargs)
-        self.data = []
+        self.queue_size = []
         self.service_time_generator = service_time_generator()
         self.env = env
         self.name = name
 
     def request(self, *args, **kwargs):
-        self.data.append((self.env.now, len(self.queue)))
-        return super().request(*args, **kwargs)
-
+        req = super().request(*args, **kwargs)
+        self.queue_size.append((self.env.now, len(self.queue), 'request'))
+        return req
 
     def release(self, *args, **kwargs):
-        self.data.append((self.env.now, len(self.queue)))
-        return super().release(*args, **kwargs)
-
-    # @abc.abstractmethod
-    # def process_request(self, entity, request):
-    #     pass
+        rel = super().release(*args, **kwargs)
+        self.queue_size.append((self.env.now, len(self.queue), 'release'))
+        return rel
+    
+    def queue_size_over_time(self):
+        return self.queue_size
+        
+    def process_entity(self, entity):
+        raise NotImplementedError("Implement this method")
 
 class Entity(object):
 
@@ -40,7 +44,7 @@ class Entity(object):
     def _empty_resource_tracking_dict():
         return { 'arrival_time': 0, 'start_service_time': 0, 'finish_service_time': 0 }
 
-    def __init__(self, env, name, *args, **kwargs):
+    def __init__(self, env, name, creation_time, *args, **kwargs):
         """
         resources_requested - keeps track of all of the resources that were requested by this entity (in order of visitation)
         attributes - a list of keys/values that apply to this entity (gender, age, etc...)
@@ -50,7 +54,7 @@ class Entity(object):
         super().__init__(*args, **kwargs)
         self.env = env
         self.name = name
-        self.creation_time = env.now
+        self.creation_time = creation_time
         self.resources_requested = OrderedDict()
         self.attributes = kwargs
         self.disposal_time = None # remember to dispose of entities after finishing processing!
@@ -68,9 +72,8 @@ class Entity(object):
         total time that the entity spent in the system (from creation to disposal)
         only accessible once the entity has been disposed
         """
-        if is_disposed():
-            if not self.total_time:
-                self._calculate_statistics()
+        if self._is_disposed():
+            self._calculate_statistics()
             return self.total_time
         else:
             raise Exception("Can't get total time: Entity has not been disposed")
@@ -80,9 +83,8 @@ class Entity(object):
         total time that the entity spent queued waiting for resources
         only accessible wonce the entity has been disposed
         """
-        if is_disposed():
-            if not self.waiting_time:
-                self._calculate_statistics()
+        if self._is_disposed():
+            self._calculate_statistics()
             return self.waiting_time
         else:
             raise Exception("Can't get total waiting time: Entity has not been disposed")
@@ -97,9 +99,8 @@ class Entity(object):
         """
         total time that the entity spent being processed by resources
         """
-        if is_disposed():
-            if not self.processing_time:
-                self._calculate_statistics()
+        if self._is_disposed():
+            self._calculate_statistics()
             return self.processing_time
         else:
             raise Exception("Can't get total processing time: Entity has not been disposed")
@@ -120,8 +121,12 @@ class Entity(object):
         self._add_resource_to_visited(resource.name)
         self.resources_requested[resource.name]["arrival_time"] = self.env.now
         return resource.request()
+    
+    def start_service_at_resource(self, resource):
+        self.resources_requested[resource.name]["start_service_time"] = self.env.now
 
     def release_resource(self, resource, request):
+        self.resources_requested[resource.name]["finish_service_time"] = self.env.now
         resource.release(request)
 
     def dispose(self):
@@ -166,54 +171,37 @@ def exponential_1():
     while True:
         yield np.random.exponential(scale=1.0)
 
-# class Create(object):
-#     """
-#     Defines the arrival times for entities in the system
-#     mechanisms for defining the arrival times
-
-#     Things that would be nice to configure for creation
-#     1) the interarrival times
-#         - e.g. maybe you just want set interarrival times ()
-#     """
-
-#     def __init__(self, env, entity, *args, arrival_strategy=exponential_1, max_arrivals=np.inf, entities_per_arrival=1, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.entity = entity
-#         self.env = env
-#         self.arrival_strategy = arrival_strategy
-#         self.max_arrivals = max_arrivals
-#         self.entities_per_arrival = entities_per_arrival
-
-#     def next_entity(self):
-#         arrival = self.arrival_strategy()
-#         yield self.env.timeout(arrival)
-#         return self.entity(self.env)
 
 class Source(object):
     """
-    keeps track of entities that have been sourced
+    keeps track of entities that have been produced for simluation
     """
-    def __init__(self, entity):
-        self.entity = entity
+    def __init__(self, env, Entity, interarrival_time_generator):
+        self.env = env
+        self.Entity = Entity
+        self.interarrival_time_generator = interarrival_time_generator
         self.entities = []
 
     def next_entity(self, *args, **kwargs):
-        entity = self.entity(*args, **kwargs)
-        self.entities.append(entity)
-        return entity
+        for time in self.interarrival_time_generator():
+            timeout = self.env.timeout(time)
+            creation_time = self.env.now + time
+            entity = self.Entity(self.env, f"job_{creation_time}", creation_time, *args, **kwargs,)
+            self.entities.append(entity)
+            yield timeout, entity
+    
+    def get_entities(self):
+        return self.entities
+    
+    def get_total_times(self):
+        return [entity.get_total_time() for entity in self.entities]
 
+    def get_waiting_times(self):
+        return [entity.get_total_waiting_time() for entity in self.entities]
+    
+    def get_processing_times(self):
+        return [entity.get_total_processing_time() for entity in self.entities]
+    
+    
 
-class Dispose(object):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.disposed_entities = []
-
-    def dispose(self, entity):
-
-        """
-        Disposes of the provided entity.
-        This should be used on entities that have finished being processed.
-        Returns the time that the entity was disposed.
-        """
-        self.disposed_entities.append(entity)
-        entity.dispose()
+        
