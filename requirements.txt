@@ -49,7 +49,7 @@ python-dateutil==2.7.3
 python-slugify==1.2.6
 pytz==2018.9
 pyzmq==18.0.1
-requests==2.19.1
+requests==2.20.0
 Send2Trash==1.5.0
 simpy==3.0.11
 six==1.11.0
