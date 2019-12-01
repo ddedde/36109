@@ -14,13 +14,13 @@ import numpy as np
 
 from collections import OrderedDict
 
+"""
+This class is abstract
+"""
 class Resource(simpy.Resource):
-    def __init__(self, env, name='', service_time_generator=lambda:1, *args, **kwargs):
-        super().__init__(env, *args, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.queue_size = []
-        self.service_time_generator = service_time_generator()
-        self.env = env
-        self.name = name
 
     def request(self, *args, **kwargs):
         req = super().request(*args, **kwargs)
@@ -28,12 +28,33 @@ class Resource(simpy.Resource):
         return req
 
     def release(self, *args, **kwargs):
-        rel = super().release(*args, **kwargs)
-        self.queue_size.append((self.env.now, len(self.queue), 'release'))
-        return rel
+        return super().release(*args, **kwargs)
     
     def queue_size_over_time(self):
-        return self.queue_size
+        i = 0
+        d = {}
+        queue_over_time = []
+        for time, size, status in self.queue_size:
+            if time in d:
+                d[time].append((size, status))
+            else:
+                d[time] = [(size, status)]
+        current_queue_size = 0
+        
+        for i in range(self.env.now):
+            if i in d:
+                # we found an activity that happened here
+                biggest_size_of_activity = 0
+                for size, status in d[i]:
+                    if size > biggest_size_of_activity:
+                        biggest_size_of_activity = size 
+                current_queue_size = biggest_size_of_activity
+            queue_over_time.append(current_queue_size)
+        
+        return queue_over_time
+                
+    def add_queue_check(self):
+        self.queue_size.append((self.env.now, len(self.queue), 'start'))
         
     def process_entity(self, entity):
         raise NotImplementedError("Implement this method")
@@ -124,6 +145,7 @@ class Entity(object):
     
     def start_service_at_resource(self, resource):
         self.resources_requested[resource.name]["start_service_time"] = self.env.now
+        resource.add_queue_check()
 
     def release_resource(self, resource, request):
         self.resources_requested[resource.name]["finish_service_time"] = self.env.now
