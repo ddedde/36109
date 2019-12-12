@@ -15,20 +15,24 @@ import numpy as np
 from collections import OrderedDict
 
 """
-This class is abstract
+This class is abstract. Try using ABC and multiple inheritance.
 """
 class Resource(simpy.Resource):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(self, *args, **kwargs)
+        try:
+            self.next_service_time = self.interarrival_time_generator()
+        except AttributeError:
+            raise NotImplementedError("Provide a method named interarrival_time_generator on your Source Class")
         self.queue_size = []
 
     def request(self, *args, **kwargs):
-        req = super().request(*args, **kwargs)
+        req = super().request(self, *args, **kwargs)
         self.queue_size.append((self.env.now, len(self.queue), 'request'))
         return req
 
     def release(self, *args, **kwargs):
-        return super().release(*args, **kwargs)
+        return super().release(self, *args, **kwargs)
     
     def queue_size_over_time(self):
         i = 0
@@ -39,8 +43,8 @@ class Resource(simpy.Resource):
                 d[time].append((size, status))
             else:
                 d[time] = [(size, status)]
-        current_queue_size = 0
         
+        current_queue_size = 0
         for i in range(self.env.now):
             if i in d:
                 # we found an activity that happened here
@@ -72,7 +76,7 @@ class Entity(object):
         creation_time - when the entity was created (initialized in constructor)
         disposal_time - when the entity was disposed of
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(self, *args, **kwargs)
         self.env = env
         self.name = name
         self.creation_time = creation_time
@@ -194,21 +198,28 @@ def exponential_1():
         yield np.random.exponential(scale=1.0)
 
 
+"""
+Could be abstract as well?
+"""
 class Source(object):
     """
     keeps track of entities that have been produced for simluation
     """
-    def __init__(self, env, Entity, interarrival_time_generator):
+    def __init__(self, env, first_creation=None, *args, **kwargs):
+        super().__init__(self, *args, **kwargs)
+        try:
+            self._interarrival_time_generator = self.interarrival_time_generator()
+        except AttributeError:
+            raise NotImplementedError("Provide a method named interarrival_time_generator on your Source Class")
         self.env = env
-        self.Entity = Entity
-        self.interarrival_time_generator = interarrival_time_generator
+        self.first_creation = first_creation
         self.entities = []
 
     def next_entity(self, *args, **kwargs):
-        for time in self.interarrival_time_generator():
+        for time in self._interarrival_time_generator():
             timeout = self.env.timeout(time)
             creation_time = self.env.now + time
-            entity = self.Entity(self.env, f"job_{creation_time}", creation_time, *args, **kwargs,)
+            entity = self.build_entity()
             self.entities.append(entity)
             yield timeout, entity
     
@@ -223,6 +234,13 @@ class Source(object):
     
     def get_processing_times(self):
         return [entity.get_total_processing_time() for entity in self.entities]
+    
+    def _interarrival_time_generator(self):
+        # if first_creation exists, emit it as the first time, else just use the interarrival_time
+        if self.first_creation is not None:
+            yield self.first_creation
+        for time in self.interarrival_time_generator_template():
+            yield time
     
     
 
