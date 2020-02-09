@@ -18,21 +18,21 @@ from collections import OrderedDict
 This class is abstract. Try using ABC and multiple inheritance.
 """
 class Resource(simpy.Resource):
-    def __init__(self, *args, **kwargs):
-        super().__init__(self, *args, **kwargs)
-        try:
-            self.next_service_time = self.interarrival_time_generator()
-        except AttributeError:
-            raise NotImplementedError("Provide a method named interarrival_time_generator on your Source Class")
+    def __init__(self, env, *args, **kwargs):
+        super().__init__(env, *args, **kwargs)
         self.queue_size = []
+        try:
+            self._service_time_generator_template = self.service_time_generator()
+        except AttributeError:
+            raise NotImplementedError("Provide a method named service_time_generator on your Resource class")
 
     def request(self, *args, **kwargs):
-        req = super().request(self, *args, **kwargs)
+        req = super().request(*args, **kwargs)
         self.queue_size.append((self.env.now, len(self.queue), 'request'))
         return req
 
     def release(self, *args, **kwargs):
-        return super().release(self, *args, **kwargs)
+        return super().release(*args, **kwargs)
     
     def queue_size_over_time(self):
         i = 0
@@ -59,9 +59,12 @@ class Resource(simpy.Resource):
                 
     def add_queue_check(self):
         self.queue_size.append((self.env.now, len(self.queue), 'start'))
+    
+    def next_service_time(self):
+        return next(self._service_time_generator_template)
         
     def process_entity(self, entity):
-        raise NotImplementedError("Implement this method")
+        raise NotImplementedError("Implement this method in your source class")
 
 class Entity(object):
 
@@ -76,7 +79,7 @@ class Entity(object):
         creation_time - when the entity was created (initialized in constructor)
         disposal_time - when the entity was disposed of
         """
-        super().__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.env = env
         self.name = name
         self.creation_time = creation_time
@@ -206,9 +209,9 @@ class Source(object):
     keeps track of entities that have been produced for simluation
     """
     def __init__(self, env, first_creation=None, *args, **kwargs):
-        super().__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
         try:
-            self._interarrival_time_generator = self.interarrival_time_generator()
+            self._interarrival_time_generator_template = self.interarrival_time_generator()
         except AttributeError:
             raise NotImplementedError("Provide a method named interarrival_time_generator on your Source Class")
         self.env = env
@@ -219,7 +222,7 @@ class Source(object):
         for time in self._interarrival_time_generator():
             timeout = self.env.timeout(time)
             creation_time = self.env.now + time
-            entity = self.build_entity()
+            entity = self.build_entity(creation_time)
             self.entities.append(entity)
             yield timeout, entity
     
@@ -239,7 +242,7 @@ class Source(object):
         # if first_creation exists, emit it as the first time, else just use the interarrival_time
         if self.first_creation is not None:
             yield self.first_creation
-        for time in self.interarrival_time_generator_template():
+        for time in self._interarrival_time_generator_template:
             yield time
     
     
