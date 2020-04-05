@@ -9,6 +9,11 @@
 # if we have branches in resources, how do we know which resources an entity touched?
 # -- e.g. if we have takeout and dine in as two separate resources.
 
+
+# Design philosophy: do not hide too much. Things that should be hidden are
+# - collection of statistics
+# These classes are templates.
+
 import simpy
 import numpy as np
 
@@ -21,10 +26,11 @@ class Resource(simpy.Resource):
     def __init__(self, env, *args, **kwargs):
         super().__init__(env, *args, **kwargs)
         self.queue_size = []
-        try:
-            self._service_time_generator_template = self.service_time_generator()
-        except AttributeError:
-            raise NotImplementedError("Provide a method named service_time_generator on your Resource class")
+        if self.next_service_time is None:
+            raise NotImplementedError("Implement the next_service_time method")
+        
+        if self.process_entity is None:
+            raise NotImplementedError("Implement the process_entity method")
 
     def request(self, *args, **kwargs):
         req = super().request(*args, **kwargs)
@@ -60,13 +66,8 @@ class Resource(simpy.Resource):
     def add_queue_check(self):
         self.queue_size.append((self.env.now, len(self.queue), 'start'))
     
-    def next_service_time(self):
-        return next(self._service_time_generator_template)
-        
-    def process_entity(self, entity):
-        raise NotImplementedError("Implement this method in your source class")
 
-class Entity(object):
+class Entity:
 
     @staticmethod
     def _empty_resource_tracking_dict():
@@ -79,7 +80,6 @@ class Entity(object):
         creation_time - when the entity was created (initialized in constructor)
         disposal_time - when the entity was disposed of
         """
-        super().__init__(*args, **kwargs)
         self.env = env
         self.name = name
         self.creation_time = creation_time
@@ -195,12 +195,6 @@ class Entity(object):
         self.resources_requested[resource_name] = Entity._empty_resource_tracking_dict()
 
 
-
-def exponential_1():
-    while True:
-        yield np.random.exponential(scale=1.0)
-
-
 """
 Could be abstract as well?
 """
@@ -208,7 +202,7 @@ class Source(object):
     """
     keeps track of entities that have been produced for simluation
     """
-    def __init__(self, env, first_creation=None, *args, **kwargs):
+    def __init__(self, env, first_creation=None, number=float("Inf") *args, **kwargs):
         super().__init__(*args, **kwargs)
         try:
             self._interarrival_time_generator_template = self.interarrival_time_generator()
@@ -216,6 +210,7 @@ class Source(object):
             raise NotImplementedError("Provide a method named interarrival_time_generator on your Source Class")
         self.env = env
         self.first_creation = first_creation
+        self.number = number
         self.entities = []
 
     def next_entity(self, *args, **kwargs):
@@ -245,6 +240,3 @@ class Source(object):
         for time in self._interarrival_time_generator_template:
             yield time
     
-    
-
-        
