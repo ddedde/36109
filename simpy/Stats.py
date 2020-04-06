@@ -48,7 +48,7 @@ class Resource(simpy.Resource):
                 d[time] = [(size, status)]
         
         current_queue_size = 0
-        for i in range(self.env.now):
+        for i in range(int(self.env.now)):
             if i in d:
                 # we found an activity that happened here
                 biggest_size_of_activity = 0
@@ -97,7 +97,7 @@ class Entity:
         total time that the entity spent in the system (from creation to disposal)
         only accessible once the entity has been disposed
         """
-        if self._is_disposed():
+        if self.is_disposed():
             self._calculate_statistics()
             return self.total_time
         else:
@@ -108,7 +108,7 @@ class Entity:
         total time that the entity spent queued waiting for resources
         only accessible wonce the entity has been disposed
         """
-        if self._is_disposed():
+        if self.is_disposed():
             self._calculate_statistics()
             return self.waiting_time
         else:
@@ -124,7 +124,7 @@ class Entity:
         """
         total time that the entity spent being processed by resources
         """
-        if self._is_disposed():
+        if self.is_disposed():
             self._calculate_statistics()
             return self.processing_time
         else:
@@ -143,15 +143,19 @@ class Entity:
 
         TODO: figure out how to uniquely identify resources if multiple are named the same.
         """
+        print(f'{self.name} requesting {resource.name}: {self.env.now}')
+
         self._add_resource_to_visited(resource.name)
         self.resources_requested[resource.name]["arrival_time"] = self.env.now
         return resource.request()
     
     def start_service_at_resource(self, resource):
+        print(f'{self.name} started processing at {resource.name} : {self.env.now}')        
         self.resources_requested[resource.name]["start_service_time"] = self.env.now
         resource.add_queue_check()
 
     def release_resource(self, resource, request):
+        print(f'{self.name} finished at {resource.name}: {self.env.now}')
         self.resources_requested[resource.name]["finish_service_time"] = self.env.now
         resource.release(request)
 
@@ -163,7 +167,7 @@ class Entity:
         print(f"{self.name} disposed: {self.disposal_time}")
         return self.disposal_time
 
-    def _is_disposed(self):
+    def is_disposed(self):
         return self.disposal_time is not None
 
     def _calculate_waiting_time_for_resource(self, resource_name):
@@ -175,7 +179,7 @@ class Entity:
         return resource_stats["finish_service_time"] - resource_stats["start_service_time"]
 
     def _calculate_statistics(self):
-        if not self._is_disposed():
+        if not self.is_disposed():
             raise Exception("Entity is not yet disposed. Dispose of this entity before calculating stats")
         waiting_time = 0
         processing_time = 0
@@ -211,23 +215,27 @@ class Source(object):
 
     def next_entity(self, *args, **kwargs):
         for time in self._interarrival_time_generator():
+            if len(self.entities) == self.number:
+                # we've reached the number we need to source
+                # They will finish processing before simulation ends
+                break 
             timeout = self.env.timeout(time)
             creation_time = self.env.now + time
             entity = self.build_entity(creation_time)
             self.entities.append(entity)
             yield timeout, entity        
     
-    def get_entities(self):
-        return self.entities
+    def get_disposed_entities(self):
+        return [entity for entity in self.entities if entity.is_disposed()]
     
     def get_total_times(self):
-        return [entity.get_total_time() for entity in self.entities]
+        return [entity.get_total_time() for entity in self.get_disposed_entities()]
 
     def get_waiting_times(self):
-        return [entity.get_total_waiting_time() for entity in self.entities]
+        return [entity.get_total_waiting_time() for entity in self.get_disposed_entities()]
     
     def get_processing_times(self):
-        return [entity.get_total_processing_time() for entity in self.entities]
+        return [entity.get_total_processing_time() for entity in self.get_disposed_entities()]
     
     def _interarrival_time_generator(self):
         # if first_creation exists, emit it as the first time, else just use the interarrival_time
