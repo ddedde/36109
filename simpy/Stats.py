@@ -28,6 +28,8 @@ class Resource(simpy.Resource):
         self.queue_size = []
         if self.next_service_time is None:
             raise NotImplementedError("Implement the next_service_time method")
+        if self.name is None:
+            raise NotImplementedError("You must provide a self.name for your resource")
 
     def request(self, *args, **kwargs):
         req = super().request(*args, **kwargs)
@@ -77,6 +79,8 @@ class Entity:
         creation_time - when the entity was created (initialized in constructor)
         disposal_time - when the entity was disposed of
         """
+        if self.process is None:
+             raise NotImplementedError("You must define a function called 'process'")
         self.env = env
         self.name = name
         self.creation_time = creation_time
