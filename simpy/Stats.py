@@ -28,9 +28,6 @@ class Resource(simpy.Resource):
         self.queue_size = []
         if self.next_service_time is None:
             raise NotImplementedError("Implement the next_service_time method")
-        
-        if self.process_entity is None:
-            raise NotImplementedError("Implement the process_entity method")
 
     def request(self, *args, **kwargs):
         req = super().request(*args, **kwargs)
@@ -202,8 +199,7 @@ class Source(object):
     """
     keeps track of entities that have been produced for simluation
     """
-    def __init__(self, env, first_creation=None, number=float("Inf") *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, env, first_creation=None, number=float("Inf"), *args, **kwargs):
         try:
             self._interarrival_time_generator_template = self.interarrival_time_generator()
         except AttributeError:
@@ -219,7 +215,7 @@ class Source(object):
             creation_time = self.env.now + time
             entity = self.build_entity(creation_time)
             self.entities.append(entity)
-            yield timeout, entity
+            yield timeout, entity        
     
     def get_entities(self):
         return self.entities
