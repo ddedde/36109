@@ -19,17 +19,15 @@ import numpy as np
 
 from collections import OrderedDict
 
-"""
-This class is abstract. Try using ABC and multiple inheritance.
-"""
-class Resource(simpy.Resource):
+# This class defines methods to be mixed in to Resource and PriorityResource from simpy. 
+class ResourceStatsMixin:
     def __init__(self, env, *args, **kwargs):
         super().__init__(env, *args, **kwargs)
         self.queue_size = []
+        self.env = env
         if self.next_service_time is None:
             raise NotImplementedError("Implement the next_service_time method")
-        if self.name is None:
-            raise NotImplementedError("You must provide a self.name for your resource")
+        self.name = self.__class__.__name__
 
     def request(self, *args, **kwargs):
         req = super().request(*args, **kwargs)
@@ -64,7 +62,17 @@ class Resource(simpy.Resource):
                 
     def add_queue_check(self):
         self.queue_size.append((self.env.now, len(self.queue), 'start'))
-    
+
+
+class Resource(ResourceStatsMixin, simpy.Resource):
+    def request(self, *args, **kwargs):
+        if "priority" in kwargs.keys():
+            del kwargs["priority"]
+        return super().request(*args, **kwargs)
+
+class PriorityResource(ResourceStatsMixin, simpy.PriorityResource):
+    pass
+        
 
 class Entity:
 
@@ -72,7 +80,7 @@ class Entity:
     def _empty_resource_tracking_dict():
         return { 'arrival_time': 0, 'start_service_time': 0, 'finish_service_time': 0 }
 
-    def __init__(self, env, name, creation_time, *args, **kwargs):
+    def __init__(self, env, *args, **kwargs):
         """
         resources_requested - keeps track of all of the resources that were requested by this entity (in order of visitation)
         attributes - a list of keys/values that apply to this entity (gender, age, etc...)
@@ -82,8 +90,8 @@ class Entity:
         if self.process is None:
              raise NotImplementedError("You must define a function called 'process'")
         self.env = env
-        self.name = name
-        self.creation_time = creation_time
+        self.name = f"{self.__class__.__name__} {kwargs['name']}" if "name" in kwargs.keys() else None
+        self.creation_time = None
         self.resources_requested = OrderedDict()
         self.attributes = kwargs
         self.disposal_time = None # remember to dispose of entities after finishing processing!
@@ -144,14 +152,12 @@ class Entity:
         """
         The time that a resource is requested
         should be logged as the "arrival time" for the resource.
-
-        TODO: figure out how to uniquely identify resources if multiple are named the same.
         """
         print(f'{self.name} requesting {resource.name}: {self.env.now}')
 
         self._add_resource_to_visited(resource.name)
         self.resources_requested[resource.name]["arrival_time"] = self.env.now
-        return resource.request()
+        return resource.request(priority=self.attributes["priority"] if 'priority' in self.attributes.keys() else None)
     
     def start_service_at_resource(self, resource):
         print(f'{self.name} started processing at {resource.name} : {self.env.now}')        
@@ -170,6 +176,9 @@ class Entity:
         self.disposal_time = self.env.now
         print(f"{self.name} disposed: {self.disposal_time}")
         return self.disposal_time
+    
+    def __str__(self):
+        return f"{self.name} created_at: {self.creation_time} attributes: {self.attributes}"
 
     def is_disposed(self):
         return self.disposal_time is not None
@@ -187,7 +196,6 @@ class Entity:
             raise Exception("Entity is not yet disposed. Dispose of this entity before calculating stats")
         waiting_time = 0
         processing_time = 0
-
         for resource_name, _ in self.resources_requested.items():
             waiting_time += self._calculate_waiting_time_for_resource(resource_name)
             processing_time += self._calculate_processing_time_for_resource(resource_name)
@@ -200,10 +208,7 @@ class Entity:
         self.resources_requested[resource_name] = Entity._empty_resource_tracking_dict()
 
 
-"""
-Could be abstract as well?
-"""
-class Source(object):
+class Source:
     """
     keeps track of entities that have been produced for simluation
     """
@@ -225,21 +230,24 @@ class Source(object):
                 break 
             timeout = self.env.timeout(time)
             creation_time = self.env.now + time
-            entity = self.build_entity(creation_time)
+            entity = self.build_entity()
+            entity.creation_time = creation_time
             self.entities.append(entity)
             yield timeout, entity        
     
-    def get_disposed_entities(self):
-        return [entity for entity in self.entities if entity.is_disposed()]
-    
     def get_total_times(self):
-        return [entity.get_total_time() for entity in self.get_disposed_entities()]
+        return [entity.get_total_time() for entity in self._get_disposed_entities()]
 
     def get_waiting_times(self):
-        return [entity.get_total_waiting_time() for entity in self.get_disposed_entities()]
+        return [entity.get_total_waiting_time() for entity in self._get_disposed_entities()]
     
     def get_processing_times(self):
-        return [entity.get_total_processing_time() for entity in self.get_disposed_entities()]
+        return [entity.get_total_processing_time() for entity in self._get_disposed_entities()]
+    
+    # private methods
+    
+    def _get_disposed_entities(self):
+        return [entity for entity in self.entities if entity.is_disposed()]
     
     def _interarrival_time_generator(self):
         # if first_creation exists, emit it as the first time, else just use the interarrival_time
