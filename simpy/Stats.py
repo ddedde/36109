@@ -160,7 +160,7 @@ class Entity:
 
         self._add_resource_to_visited(resource.name)
         self.resources_requested[resource.name]["arrival_time"] = self.env.now
-        return resource.request(priority=self.attributes["priority"] if 'priority' in self.attributes.keys() else None)
+        return resource.request(priority=self.attributes["priority"])
     
     def start_service_at_resource(self, resource):
         print(f'{self.name} started processing at {resource.name} : {self.env.now}')        
@@ -185,12 +185,21 @@ class Entity:
 
     def is_disposed(self):
         return self.disposal_time is not None
+    
+    def did_visit_resource(self, resource_name):
+        return resource_name in self.resources_requested.keys()
 
     def _calculate_waiting_time_for_resource(self, resource_name):
+        if not self.did_visit_resource(resource_name):
+            return None
+        
         resource_stats = self.resources_requested[resource_name]
         return resource_stats["start_service_time"] - resource_stats["arrival_time"]
 
     def _calculate_processing_time_for_resource(self, resource_name):
+        if not self.did_visit_resource(resource_name):
+            return None
+        
         resource_stats = self.resources_requested[resource_name]
         return resource_stats["finish_service_time"] - resource_stats["start_service_time"]
 
@@ -215,7 +224,7 @@ class Source:
     """
     keeps track of entities that have been produced for simluation
     """
-    def __init__(self, env, first_creation=None, number=float("Inf"), *args, **kwargs):
+    def __init__(self, env, first_creation=None, number=float("Inf")):
         try:
             self._interarrival_time_generator_template = self.interarrival_time_generator()
         except AttributeError:
@@ -226,7 +235,7 @@ class Source:
         self.entities = []
         self.count = 0
 
-    def next_entity(self, *args, **kwargs):
+    def next_entity(self):
         for time in self._interarrival_time_generator():
             self.count += 1
             if len(self.entities) == self.number:
@@ -244,11 +253,26 @@ class Source:
     def get_total_times(self):
         return [entity.get_total_time() for entity in self._get_disposed_entities()]
 
-    def get_waiting_times(self):
+    def get_waiting_times(self, *args):
+        if args:
+            return self.get_waiting_times_for_resource(args[0])
         return [entity.get_total_waiting_time() for entity in self._get_disposed_entities()]
     
-    def get_processing_times(self):
+    def get_processing_times(self, *args):
+        if args:
+            return self.get_processing_times_for_resource(args[0])
         return [entity.get_total_processing_time() for entity in self._get_disposed_entities()]
+    
+    def get_waiting_times_for_resource(self, resource):
+        return [entity.get_waiting_time_for_resource(resource) for entity in self._get_disposed_entities()]
+    
+    def get_processing_times_for_resource(self, resource):
+        return [entity.get_processing_time_for_resource(resource) for entity in self._get_disposed_entities()]
+    
+    def start(self, resources):
+        for arrival_time, entity in self.next_entity():
+            yield arrival_time # wait for the next entity to appear
+            self.env.process(entity.process(resources))
     
     # private methods
     
