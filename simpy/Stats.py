@@ -23,10 +23,11 @@ from collections import OrderedDict
 class ResourceStatsMixin:
     def __init__(self, env, *args, **kwargs):
         super().__init__(env, *args, **kwargs)
+        if self.next_service_time is None:
+            raise NotImplementedError("You must define a function called 'next_service_time' in your Resource class")
         self.queue_size = []
         self.env = env
-        if self.next_service_time is None:
-            raise NotImplementedError("Implement the next_service_time method")
+
         self.name = self.__class__.__name__
 
     def request(self, *args, **kwargs):
@@ -64,15 +65,8 @@ class ResourceStatsMixin:
         self.queue_size.append((self.env.now, len(self.queue), 'start'))
 
 
-class Resource(ResourceStatsMixin, simpy.Resource):
-    def request(self, *args, **kwargs):
-        if "priority" in kwargs.keys():
-            del kwargs["priority"]
-        return super().request(*args, **kwargs)
-
-class PriorityResource(ResourceStatsMixin, simpy.PriorityResource):
+class Resource(ResourceStatsMixin, simpy.PriorityResource):
     pass
-        
 
 class Entity:
 
@@ -80,7 +74,7 @@ class Entity:
     def _empty_resource_tracking_dict():
         return { 'arrival_time': 0, 'start_service_time': 0, 'finish_service_time': 0 }
 
-    def __init__(self, env, *args, **kwargs):
+    def __init__(self, env, attributes):
         """
         resources_requested - keeps track of all of the resources that were requested by this entity (in order of visitation)
         attributes - a list of keys/values that apply to this entity (gender, age, etc...)
@@ -88,12 +82,21 @@ class Entity:
         disposal_time - when the entity was disposed of
         """
         if self.process is None:
-             raise NotImplementedError("You must define a function called 'process'")
+             raise NotImplementedError("You must define a function called 'process' in your entity class")
+        
+        self.attributes = attributes or {}
+
+        # Default priority for non-priority-entities is 0
+        priority = 0
+        if "priority" in self.attributes.keys():
+            priority = self.attributes["priority"]
+        elif "priority" in dir(self.__class__):
+            priority = self.__class__.priority
+        
+        self.attributes["priority"] = priority
         self.env = env
-        self.name = f"{self.__class__.__name__} {kwargs['name']}" if "name" in kwargs.keys() else None
         self.creation_time = None
         self.resources_requested = OrderedDict()
-        self.attributes = kwargs
         self.disposal_time = None # remember to dispose of entities after finishing processing!
 
     def set_attribute(self, attribute_name, attribute_value):
@@ -221,9 +224,11 @@ class Source:
         self.first_creation = first_creation
         self.number = number
         self.entities = []
+        self.count = 0
 
     def next_entity(self, *args, **kwargs):
         for time in self._interarrival_time_generator():
+            self.count += 1
             if len(self.entities) == self.number:
                 # we've reached the number we need to source
                 # They will finish processing before simulation ends
@@ -232,6 +237,7 @@ class Source:
             creation_time = self.env.now + time
             entity = self.build_entity()
             entity.creation_time = creation_time
+            entity.name = f"{entity.__class__.__name__} {self.count}"
             self.entities.append(entity)
             yield timeout, entity        
     
