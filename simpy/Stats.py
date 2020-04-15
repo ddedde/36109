@@ -1,18 +1,6 @@
-# Entities should be able to store information about their trip through the system
-# They should also be able to store attributes about themselves (gender, type, age) which could affect their treatment in the system.
-
-# questions:
-# How long did this entity spend in the system?
-# How long did this entity spend at a particular resource (queue? in service? both combined?)
-
-# primitives for each resource enter queue @ resource -> start processing @ resource -> exit resource
-# if we have branches in resources, how do we know which resources an entity touched?
-# -- e.g. if we have takeout and dine in as two separate resources.
-
-
 # Design philosophy: do not hide too much. Things that should be hidden are
 # - collection of statistics
-# These classes are templates.
+# These classes are abstract template classes. Fill in methods.
 
 import simpy
 import numpy as np
@@ -23,8 +11,8 @@ from collections import OrderedDict
 class ResourceStatsMixin:
     def __init__(self, env, *args, **kwargs):
         super().__init__(env, *args, **kwargs)
-        if self.next_service_time is None:
-            raise NotImplementedError("You must define a function called 'next_service_time' in your Resource class")
+        if self.service_time is None:
+            raise NotImplementedError("You must define a function called 'service_time' in your Resource class")
         self.queue_size = []
         self.env = env
 
@@ -69,10 +57,10 @@ class Resource(ResourceStatsMixin, simpy.PriorityResource):
     pass
 
 class Entity:
-
+    DEFAULT_ENTITY_PRIORITY = 1
     @staticmethod
     def _empty_resource_tracking_dict():
-        return { 'arrival_time': 0, 'start_service_time': 0, 'finish_service_time': 0 }
+        return { 'arrival_time': [], 'start_service_time': [], 'finish_service_time': [] }
 
     def __init__(self, env, attributes):
         """
@@ -87,7 +75,7 @@ class Entity:
         self.attributes = attributes or {}
 
         # Default priority for non-priority-entities is 0
-        priority = 0
+        priority = Entity.DEFAULT_ENTITY_PRIORITY
         if "priority" in self.attributes.keys():
             priority = self.attributes["priority"]
         elif "priority" in dir(self.__class__):
@@ -117,7 +105,7 @@ class Entity:
             return self.total_time
         else:
             raise Exception("Can't get total time: Entity has not been disposed")
-
+    
     def get_total_waiting_time(self):
         """
         total time that the entity spent queued waiting for resources
@@ -151,7 +139,7 @@ class Entity:
         """
         return self._calculate_processing_time_for_resource(resource.name)
 
-    def request_resource(self, resource):
+    def request_resource(self, resource, priority_override=None):
         """
         The time that a resource is requested
         should be logged as the "arrival time" for the resource.
@@ -159,17 +147,18 @@ class Entity:
         print(f'{self.name} requesting {resource.name}: {self.env.now}')
 
         self._add_resource_to_visited(resource.name)
-        self.resources_requested[resource.name]["arrival_time"] = self.env.now
-        return resource.request(priority=self.attributes["priority"])
+        self.resources_requested[resource.name]["arrival_time"].append(self.env.now)
+        priority = priority_override if priority_override is not None else self.attributes["priority"]
+        return resource.request(priority=priority)
     
     def start_service_at_resource(self, resource):
         print(f'{self.name} started processing at {resource.name} : {self.env.now}')        
-        self.resources_requested[resource.name]["start_service_time"] = self.env.now
+        self.resources_requested[resource.name]["start_service_time"].append(self.env.now)
         resource.add_queue_check()
 
     def release_resource(self, resource, request):
         print(f'{self.name} finished at {resource.name}: {self.env.now}')
-        self.resources_requested[resource.name]["finish_service_time"] = self.env.now
+        self.resources_requested[resource.name]["finish_service_time"].append(self.env.now)
         resource.release(request)
 
     def dispose(self):
@@ -194,14 +183,14 @@ class Entity:
             return None
         
         resource_stats = self.resources_requested[resource_name]
-        return resource_stats["start_service_time"] - resource_stats["arrival_time"]
+        return sum([start_time - arrival_time for start_time, arrival_time in zip(resource_stats["start_service_time"], resource_stats["arrival_time"])])
 
     def _calculate_processing_time_for_resource(self, resource_name):
         if not self.did_visit_resource(resource_name):
             return None
         
         resource_stats = self.resources_requested[resource_name]
-        return resource_stats["finish_service_time"] - resource_stats["start_service_time"]
+        return sum([finish_time - start_time for finish_time, start_time in zip(resource_stats["finish_service_time"], resource_stats["start_service_time"])])
 
     def _calculate_statistics(self):
         if not self.is_disposed():
@@ -217,7 +206,9 @@ class Entity:
         self.processing_time = processing_time
 
     def _add_resource_to_visited(self, resource_name):
-        self.resources_requested[resource_name] = Entity._empty_resource_tracking_dict()
+        if not resource_name in self.resources_requested.keys():
+            self.resources_requested[resource_name] = Entity._empty_resource_tracking_dict()
+        
 
 
 class Source:
@@ -269,10 +260,12 @@ class Source:
     def get_processing_times_for_resource(self, resource):
         return [entity.get_processing_time_for_resource(resource) for entity in self._get_disposed_entities()]
     
-    def start(self, resources):
+    def start(self, *args, **kwargs):
+
         for arrival_time, entity in self.next_entity():
             yield arrival_time # wait for the next entity to appear
-            self.env.process(entity.process(resources))
+            p = self.env.process(entity.process(**kwargs))
+            p.callbacks.append(self._dispose(entity))
     
     # private methods
     
@@ -285,4 +278,7 @@ class Source:
             yield self.first_creation
         for time in self._interarrival_time_generator_template:
             yield time
+    
+    def _dispose(self, entity):
+        return lambda _: (entity.dispose())
     
