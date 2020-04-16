@@ -62,7 +62,7 @@ class Entity:
     def _empty_resource_tracking_dict():
         return { 'arrival_time': [], 'start_service_time': [], 'finish_service_time': [] }
 
-    def __init__(self, env, attributes):
+    def __init__(self, env, attributes = {}):
         """
         resources_requested - keeps track of all of the resources that were requested by this entity (in order of visitation)
         attributes - a list of keys/values that apply to this entity (gender, age, etc...)
@@ -72,7 +72,7 @@ class Entity:
         if self.process is None:
              raise NotImplementedError("You must define a function called 'process' in your entity class")
         
-        self.attributes = attributes or {}
+        self.attributes = attributes
 
         # Default priority for non-priority-entities is 0
         priority = Entity.DEFAULT_ENTITY_PRIORITY
@@ -86,7 +86,10 @@ class Entity:
         self.creation_time = None
         self.resources_requested = OrderedDict()
         self.disposal_time = None # remember to dispose of entities after finishing processing!
-
+    
+    def __str__(self):
+        return f"{self.name} created_at: {self.creation_time} attributes: {self.attributes}"
+    
     def set_attribute(self, attribute_name, attribute_value):
         """
         Record arbitrary set of attributes about the entity.
@@ -168,9 +171,6 @@ class Entity:
         self.disposal_time = self.env.now
         print(f"{self.name} disposed: {self.disposal_time}")
         return self.disposal_time
-    
-    def __str__(self):
-        return f"{self.name} created_at: {self.creation_time} attributes: {self.attributes}"
 
     def is_disposed(self):
         return self.disposal_time is not None
@@ -264,8 +264,8 @@ class Source:
 
         for arrival_time, entity in self.next_entity():
             yield arrival_time # wait for the next entity to appear
-            p = self.env.process(entity.process(**kwargs))
-            p.callbacks.append(self._dispose(entity))
+            p = self.env.process(entity.process())
+            p.callbacks.append(self._dispose(entity)) # disposal happens automatically
     
     # private methods
     
@@ -280,5 +280,9 @@ class Source:
             yield time
     
     def _dispose(self, entity):
+        """
+        This is used to append dispose to the end of the entity.process callback list
+        It needs to be a lambda. 
+        """
         return lambda _: (entity.dispose())
     
