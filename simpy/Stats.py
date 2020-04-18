@@ -9,13 +9,18 @@ from collections import OrderedDict
 
 # This class defines methods to be mixed in to Resource and PriorityResource from simpy. 
 class ResourceStatsMixin:
+    VALID_SAMPLE_FREQUENCIES = [0.01, 0.1, 1]
+    DECIMAL_MAP = { # maps sample frequencies to decimals
+        .01: 2,
+        .1: 1,
+        1: 0
+    }
     def __init__(self, env, *args, **kwargs):
         super().__init__(env, *args, **kwargs)
         if self.service_time is None:
             raise NotImplementedError("You must define a function called 'service_time' in your Resource class")
         self.queue_size = []
         self.env = env
-
         self.name = self.__class__.__name__
 
     def request(self, *args, **kwargs):
@@ -26,37 +31,44 @@ class ResourceStatsMixin:
     def release(self, *args, **kwargs):
         return super().release(*args, **kwargs)
     
-    def queue_size_over_time(self):
-        i = 0
-        d = {}
-        queue_over_time = []
-        for time, size, status in self.queue_size:
-            if time in d:
-                d[time].append((size, status))
-            else:
-                d[time] = [(size, status)]
-        
+    def queue_size_over_time(self, sample_frequency=1): # something like this. 
+        # based on sample_frequency, decide how often we need to sample (maybe merge keys)
+        # I'm thinking it could be either .1, .01 or 1
+        if sample_frequency not in ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES:
+            raise NotImplementedError(f"You must pick a sample frequency in the list {ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES}")
+
+        decimals = ResourceStatsMixin.DECIMAL_MAP[sample_frequency] 
+        rounded_queue = self._rounded_queue(decimals)
         current_queue_size = 0
-        for i in range(int(self.env.now)):
-            if i in d:
+        queue_over_time = []
+        for i in np.around(np.arange(0, self.env.now, sample_frequency), decimals):
+            if i in rounded_queue:
                 # we found an activity that happened here
-                biggest_size_of_activity = 0
-                for size, status in d[i]:
-                    if size > biggest_size_of_activity:
-                        biggest_size_of_activity = size 
-                current_queue_size = biggest_size_of_activity
-            queue_over_time.append(current_queue_size)
+                last_queue_check = rounded_queue[i][-1][0]
+                current_queue_size = last_queue_check
+            queue_over_time.append({"time": i, "size": current_queue_size})
         
         return queue_over_time
                 
     def add_queue_check(self):
         self.queue_size.append((self.env.now, len(self.queue), 'start'))
+    
+    def _rounded_queue(self, decimals):
+        rounded_queue = {}
+        for time, size, status in self.queue_size:
+            rounded_time = np.around(time, decimals)
+            if rounded_time in rounded_queue:
+                rounded_queue[rounded_time].append((size, status))
+            else:
+                rounded_queue[rounded_time] = [(size, status)]
+        return rounded_queue
 
 
 class Resource(ResourceStatsMixin, simpy.PriorityResource):
     pass
 
 class Entity:
+    # 0 has higher priority than 1. making 1 the default allows us to bump users to front of line
     DEFAULT_ENTITY_PRIORITY = 1
     @staticmethod
     def _empty_resource_tracking_dict():
@@ -76,7 +88,7 @@ class Entity:
 
         # Default priority for non-priority-entities is 0
         priority = Entity.DEFAULT_ENTITY_PRIORITY
-        if "priority" in self.attributes.keys():
+        if "priority" in self.attributes:
             priority = self.attributes["priority"]
         elif "priority" in dir(self.__class__):
             priority = self.__class__.priority
@@ -176,7 +188,7 @@ class Entity:
         return self.disposal_time is not None
     
     def did_visit_resource(self, resource_name):
-        return resource_name in self.resources_requested.keys()
+        return resource_name in self.resources_requested
 
     def _calculate_waiting_time_for_resource(self, resource_name):
         if not self.did_visit_resource(resource_name):
@@ -206,7 +218,7 @@ class Entity:
         self.processing_time = processing_time
 
     def _add_resource_to_visited(self, resource_name):
-        if not resource_name in self.resources_requested.keys():
+        if not resource_name in self.resources_requested:
             self.resources_requested[resource_name] = Entity._empty_resource_tracking_dict()
         
 
@@ -264,6 +276,7 @@ class Source:
 
         for arrival_time, entity in self.next_entity():
             yield arrival_time # wait for the next entity to appear
+            print(entity)
             p = self.env.process(entity.process())
             p.callbacks.append(self._dispose(entity)) # disposal happens automatically
     
