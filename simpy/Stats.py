@@ -15,53 +15,72 @@ class ResourceStatsMixin:
         .1: 1,
         1: 0
     }
+    
+    @staticmethod
+    def _over_time(env, event_list, sample_frequency):
+        if sample_frequency not in ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES:
+            raise NotImplementedError(f"You must pick a sample frequency in the list {ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES}")
+
+        decimals = ResourceStatsMixin.DECIMAL_MAP[sample_frequency] 
+        rounded_event_list = ResourceStatsMixin._rounded_event_list(event_list, decimals)
+        current_size = 0
+        event_list_over_time = []
+        for i in np.around(np.arange(0, env.now, sample_frequency), decimals):
+            if i in rounded_event_list:
+                # we found an activity that happened here
+                last_queue_check = rounded_event_list[i][-1][0]
+                current_size = last_queue_check
+            event_list_over_time.append(current_size)
+        
+        return event_list_over_time
+    
+    @staticmethod
+    def _rounded_event_list(event_list, decimals):
+        """
+        Necessary for turning the list of events collected that capture utilization and queue size over time
+        into a "bucketed" list at rounded time intervals. 
+        
+        This allows queue/utilization sampling to work for continuous time.
+        """
+        rounded_event_list = {}
+        for time, size, status in event_list:
+            rounded_time = np.around(time, decimals)
+            if rounded_time in rounded_event_list:
+                rounded_event_list[rounded_time].append((size, status))
+            else:
+                rounded_event_list[rounded_time] = [(size, status)]
+        return rounded_event_list
+    
     def __init__(self, env, *args, **kwargs):
         super().__init__(env, *args, **kwargs)
         if self.service_time is None:
             raise NotImplementedError("You must define a function called 'service_time' in your Resource class")
         self.queue_size = []
+        self.utilization_size = []
         self.env = env
         self.name = self.__class__.__name__
 
     def request(self, *args, **kwargs):
         req = super().request(*args, **kwargs)
-        self.queue_size.append((self.env.now, len(self.queue), 'request'))
+        self.add_resource_check(event='request')
         return req
 
     def release(self, *args, **kwargs):
-        return super().release(*args, **kwargs)
+        rel = super().release(*args, **kwargs)
+        self.utilization_size.append((self.env.now, np.around(self.count / float(self.capacity), decimals=2), 'release'))
+        return rel
     
-    def queue_size_over_time(self, sample_frequency=1): # something like this. 
-        # based on sample_frequency, decide how often we need to sample (maybe merge keys)
-        # I'm thinking it could be either .1, .01 or 1
-        if sample_frequency not in ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES:
-            raise NotImplementedError(f"You must pick a sample frequency in the list {ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES}")
-
-        decimals = ResourceStatsMixin.DECIMAL_MAP[sample_frequency] 
-        rounded_queue = self._rounded_queue(decimals)
-        current_queue_size = 0
-        queue_over_time = []
-        for i in np.around(np.arange(0, self.env.now, sample_frequency), decimals):
-            if i in rounded_queue:
-                # we found an activity that happened here
-                last_queue_check = rounded_queue[i][-1][0]
-                current_queue_size = last_queue_check
-            queue_over_time.append({"time": i, "size": current_queue_size})
-        
-        return queue_over_time
+    def queue_size_over_time(self, sample_frequency=1):
+        return ResourceStatsMixin._over_time(self.env, self.queue_size, sample_frequency)
+    
+    def utilization_over_time(self, sample_frequency=1):
+        return ResourceStatsMixin._over_time(self.env, self.utilization_size, sample_frequency)
                 
-    def add_queue_check(self):
-        self.queue_size.append((self.env.now, len(self.queue), 'start'))
+    def add_resource_check(self, event='start'):
+        self.utilization_size.append((self.env.now, np.around(self.count / float(self.capacity), decimals=2), event))
+        self.queue_size.append((self.env.now, len(self.queue), event))
     
-    def _rounded_queue(self, decimals):
-        rounded_queue = {}
-        for time, size, status in self.queue_size:
-            rounded_time = np.around(time, decimals)
-            if rounded_time in rounded_queue:
-                rounded_queue[rounded_time].append((size, status))
-            else:
-                rounded_queue[rounded_time] = [(size, status)]
-        return rounded_queue
+
 
 
 class Resource(ResourceStatsMixin, simpy.PriorityResource):
@@ -169,7 +188,7 @@ class Entity:
     def start_service_at_resource(self, resource):
         print(f'{self.name} started processing at {resource.name} : {self.env.now}')        
         self.resources_requested[resource.name]["start_service_time"].append(self.env.now)
-        resource.add_queue_check()
+        resource.add_resource_check()
 
     def release_resource(self, resource, request):
         print(f'{self.name} finished at {resource.name}: {self.env.now}')
