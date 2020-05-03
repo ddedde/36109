@@ -191,6 +191,15 @@ class Entity:
         print(f'{self.name} started processing at {resource.name} : {self.env.now}')        
         self.resources_requested[resource.name]["start_service_time"].append(self.env.now)
         resource.add_resource_check()
+        try: 
+            service_time = resource.service_time(self)
+        except TypeError:
+            # if students do not define a resource function that depends on entity
+            # still allow them to call it.
+            service_time = resource.service_time()
+        except Exception:
+            raise Exception(f"Error when calling {resource.name} service time function")
+        return self.env.timeout(service_time)
 
     def release_resource(self, resource):
         request = self.resources_requested[resource.name]['request']
