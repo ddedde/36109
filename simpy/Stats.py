@@ -91,7 +91,7 @@ class Entity:
     DEFAULT_ENTITY_PRIORITY = 1
     @staticmethod
     def _empty_resource_tracking_dict():
-        return { 'arrival_time': [], 'start_service_time': [], 'finish_service_time': [] }
+        return { 'arrival_time': [], 'start_service_time': [], 'finish_service_time': [], 'request': None }
 
     def __init__(self, env, attributes = {}):
         """
@@ -183,17 +183,24 @@ class Entity:
         self._add_resource_to_visited(resource.name)
         self.resources_requested[resource.name]["arrival_time"].append(self.env.now)
         priority = priority_override if priority_override is not None else self.attributes["priority"]
-        return resource.request(priority=priority)
+        request = resource.request(priority=priority)
+        self.resources_requested[resource.name]['request'] = request
+        return request
     
     def start_service_at_resource(self, resource):
         print(f'{self.name} started processing at {resource.name} : {self.env.now}')        
         self.resources_requested[resource.name]["start_service_time"].append(self.env.now)
         resource.add_resource_check()
 
-    def release_resource(self, resource, request):
-        print(f'{self.name} finished at {resource.name}: {self.env.now}')
-        self.resources_requested[resource.name]["finish_service_time"].append(self.env.now)
-        resource.release(request)
+    def release_resource(self, resource):
+        request = self.resources_requested[resource.name]['request']
+        if request is None:
+            print(f"resource has already been released by {self.name}")
+        else:
+            print(f'{self.name} finished at {resource.name}: {self.env.now}')
+            self.resources_requested[resource.name]["finish_service_time"].append(self.env.now)
+            resource.release(request)
+            self.resources_requested[resource.name]['request'] = None
 
     def dispose(self):
         """
@@ -247,16 +254,15 @@ class Source:
     keeps track of entities that have been produced for simluation
     """
     def __init__(self, env, first_creation=None, number=float("Inf")):
-        try:
-            self._interarrival_time_generator_template = self.interarrival_time_generator()
-        except AttributeError:
+        if self.interarrival_time is None:
             raise NotImplementedError("Provide a method named interarrival_time_generator on your Source Class")
+        self._interarrival_time_generator_template = self._interarrival_time_generator_factory() 
         self.env = env
         self.first_creation = first_creation
         self.number = number
         self.entities = []
         self.count = 0
-
+    
     def next_entity(self):
         for time in self._interarrival_time_generator():
             self.count += 1
@@ -310,6 +316,10 @@ class Source:
             yield self.first_creation
         for time in self._interarrival_time_generator_template:
             yield time
+    
+    def _interarrival_time_generator_factory(self):
+        while True:
+            yield self.interarrival_time()
     
     def _dispose(self, entity):
         """
