@@ -7,6 +7,15 @@ import numpy as np
 
 from collections import OrderedDict
 
+
+class Debug:
+    DEBUG = False
+    @staticmethod
+    def info(msg):
+        if Debug.DEBUG:
+            print(msg)
+
+        
 # This class defines methods to be mixed in to Resource and PriorityResource from simpy. 
 class ResourceStatsMixin:
     VALID_SAMPLE_FREQUENCIES = [0.01, 0.1, 1]
@@ -67,20 +76,24 @@ class ResourceStatsMixin:
 
     def release(self, *args, **kwargs):
         rel = super().release(*args, **kwargs)
-        self.utilization_size.append((self.env.now, np.around(self.count / float(self.capacity), decimals=2), 'release'))
+        self.utilization_size.append((self.env.now, self.count, 'release'))
         return rel
     
     def queue_size_over_time(self, sample_frequency=1):
         return ResourceStatsMixin._over_time(self.env, self.queue_size, sample_frequency)
     
-    def utilization_over_time(self, sample_frequency=1):
+    def number_being_processed_over_time(self, sample_frequency=1):
         return ResourceStatsMixin._over_time(self.env, self.utilization_size, sample_frequency)
-                
+    
+    def utilization_over_time(self, sample_frequency=1):
+        # iterate through each event, calculate the utilization
+        utilization = [(x, np.around(y / float(self.capacity), decimals=2), e) for x, y, e in self.utilization_size]
+        return ResourceStatsMixin._over_time(self.env, utilization, sample_frequency)    
+    
     def add_resource_check(self, event='start'):
-        self.utilization_size.append((self.env.now, np.around(self.count / float(self.capacity), decimals=2), event))
+        self.utilization_size.append((self.env.now, self.count, event))
         self.queue_size.append((self.env.now, len(self.queue), event))
     
-
 
 
 class Resource(ResourceStatsMixin, simpy.PriorityResource):
@@ -178,7 +191,7 @@ class Entity:
         The time that a resource is requested
         should be logged as the "arrival time" for the resource.
         """
-        print(f'{self.name} requesting {resource.name}: {self.env.now}')
+        Debug.info(f'{self.name} requesting {resource.name}: {self.env.now}')
 
         self._add_resource_to_visited(resource.name)
         self.resources_requested[resource.name]["arrival_time"].append(self.env.now)
@@ -188,7 +201,7 @@ class Entity:
         return request
     
     def start_service_at_resource(self, resource):
-        print(f'{self.name} started processing at {resource.name} : {self.env.now}')        
+        Debug.info(f'{self.name} started processing at {resource.name} : {self.env.now}')        
         self.resources_requested[resource.name]["start_service_time"].append(self.env.now)
         resource.add_resource_check()
         try: 
@@ -204,9 +217,9 @@ class Entity:
     def release_resource(self, resource):
         request = self.resources_requested[resource.name]['request']
         if request is None:
-            print(f"resource has already been released by {self.name}")
+            Debug.info(f"resource has already been released by {self.name}")
         else:
-            print(f'{self.name} finished at {resource.name}: {self.env.now}')
+            Debug.info(f'{self.name} finished at {resource.name}: {self.env.now}')
             self.resources_requested[resource.name]["finish_service_time"].append(self.env.now)
             resource.release(request)
             self.resources_requested[resource.name]['request'] = None
@@ -216,7 +229,7 @@ class Entity:
         After an entity is finished being processed, it should be disposed
         """
         self.disposal_time = self.env.now
-        print(f"{self.name} disposed: {self.disposal_time}")
+        Debug.info(f"{self.name} disposed: {self.disposal_time}")
         return self.disposal_time
 
     def is_disposed(self):
@@ -306,15 +319,20 @@ class Source:
     def get_processing_times_for_resource(self, resource):
         return [entity.get_processing_time_for_resource(resource) for entity in self._get_disposed_entities()]
     
-    def start(self, *args, **kwargs):
-
+    def start(self, debug=False):
+        self._configure_debug(debug)
         for arrival_time, entity in self.next_entity():
             yield arrival_time # wait for the next entity to appear
-            print(entity)
+            Debug.info(entity)
             p = self.env.process(entity.process())
             p.callbacks.append(self._dispose(entity)) # disposal happens automatically
     
     # private methods
+    
+    def _configure_debug(self, debug):
+        Debug.DEBUG = debug
+        if Debug.DEBUG:
+            print("Debug is Enabled")
     
     def _get_disposed_entities(self):
         return [entity for entity in self.entities if entity.is_disposed()]
