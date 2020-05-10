@@ -8,11 +8,102 @@ import numpy as np
 from collections import OrderedDict
 
 class Debug:
+    """
+    Use this class to add debug statements to simulation output
+    Doesn't necessarily need to be used outside of this file... but could be
+    """
     DEBUG = False
     @staticmethod
     def info(msg):
         if Debug.DEBUG:
             print(msg)
+
+class Stats:
+    """
+    Tracks both entities and resources so we can query for summary statistics at the end of the simulation.
+    This is reset when Source.start() is called
+    """
+    summary = None
+    def __init__(self):
+        self.entities = []
+        self.resources = {}
+        Stats.summary = self
+    
+    # Entity Stats Methods
+
+    @staticmethod
+    def get_total_times():
+        Stats._check_for_instance_or_raise()
+        return [entity.get_total_time() for entity in Stats.summary._get_disposed_entities()]
+
+    @staticmethod
+    def get_waiting_times(*args):
+        Stats._check_for_instance_or_raise()
+        if args:
+            return Stats.summary._get_waiting_times_for_resource(args[0])
+        return [entity.get_total_waiting_time() for entity in Stats.summary._get_disposed_entities()]
+    
+    @staticmethod
+    def get_processing_times(*args):
+        Stats._check_for_instance_or_raise()
+        if args:
+            return Stats.summary._get_processing_times_for_resource(args[0])
+        return [entity.get_total_processing_time() for entity in Stats.summary._get_disposed_entities()]
+    
+    @staticmethod
+    def queue_size_over_time(resource, sample_frequency=1):
+        Stats._check_for_instance_or_raise()
+        try:
+            tracked_resource = Stats.summary.resources[resource.name]
+            return tracked_resource.queue_size_over_time(sample_frequency)
+        except KeyError:
+            raise Exception(f"Resource {resource.name} was not visited during simulation")
+    
+    @staticmethod
+    def utilization_over_time(resource, sample_frequency=1):
+        Stats._check_for_instance_or_raise()
+        try:
+            tracked_resource = Stats.summary.resources[resource.name]
+            return tracked_resource.utilization_over_time(sample_frequency)
+        except KeyError:
+            raise Exception(f"Resource {resource.name} was not visited during simulation")
+
+    @staticmethod
+    def number_being_processed_over_time(resource, sample_frequency=1):
+        Stats._check_for_instance_or_raise()
+        try:
+            tracked_resource = Stats.summary.resources[resource.name]
+            return tracked_resource.number_being_processed_over_time(sample_frequency)
+        except KeyError:
+            raise Exception(f"Resource {resource.name} was not visited during simulation")
+            
+    # private
+    
+    @staticmethod
+    def _add_resource(resource):
+        resource_name = resource.name
+        if not resource_name in Stats.summary.resources:
+            Stats.summary.resources[resource.name] = resource
+    
+    @staticmethod
+    def _add_entity(entity):
+        Stats.summary.entities.append(entity)
+    
+    @staticmethod
+    def _check_for_instance_or_raise():
+        if Stats.summary is None:
+            raise Exception("Run a simulation before querying for statistics")
+
+    def _get_waiting_times_for_resource(self, resource):
+        return [entity.get_waiting_time_for_resource(resource) for entity in self._get_disposed_entities()]
+    
+    def _get_processing_times_for_resource(self, resource):
+        return [entity.get_processing_time_for_resource(resource) for entity in self._get_disposed_entities()]
+
+    def _get_disposed_entities(self):
+        return [entity for entity in Stats.summary.entities if entity.is_disposed()]
+    
+    
 
         
 # This class defines methods to be mixed in to Resource and PriorityResource from simpy. 
@@ -192,7 +283,7 @@ class Entity:
         """
         Debug.info(f'{self.name} requesting {resource.name}: {self.env.now}')
 
-        self._add_resource_to_visited(resource.name)
+        self._add_resource_to_visited(resource)
         self.resources_requested[resource.name]["arrival_time"].append(self.env.now)
         priority = priority_override if priority_override is not None else self.attributes["priority"]
         request = resource.request(priority=priority)
@@ -264,7 +355,9 @@ class Entity:
         self.waiting_time = waiting_time
         self.processing_time = processing_time
 
-    def _add_resource_to_visited(self, resource_name):
+    def _add_resource_to_visited(self, resource):
+        resource_name = resource.name
+        Stats._add_resource(resource)
         if not resource_name in self.resources_requested:
             self.resources_requested[resource_name] = Entity._empty_resource_tracking_dict()
         
@@ -281,13 +374,12 @@ class Source:
         self.env = env
         self.first_creation = first_creation
         self.number = number
-        self.entities = []
         self.count = 0
     
     def next_entity(self):
         for time in self._interarrival_time_generator():
             self.count += 1
-            if len(self.entities) == self.number:
+            if self.count > self.number:
                 # we've reached the number we need to source
                 # They will finish processing before simulation ends
                 break 
@@ -296,30 +388,12 @@ class Source:
             entity = self.build_entity()
             entity.creation_time = creation_time
             entity.name = f"{entity.__class__.__name__} {self.count}"
-            self.entities.append(entity)
+            Stats._add_entity(entity)
             yield timeout, entity        
-    
-    def get_total_times(self):
-        return [entity.get_total_time() for entity in self._get_disposed_entities()]
-
-    def get_waiting_times(self, *args):
-        if args:
-            return self.get_waiting_times_for_resource(args[0])
-        return [entity.get_total_waiting_time() for entity in self._get_disposed_entities()]
-    
-    def get_processing_times(self, *args):
-        if args:
-            return self.get_processing_times_for_resource(args[0])
-        return [entity.get_total_processing_time() for entity in self._get_disposed_entities()]
-    
-    def get_waiting_times_for_resource(self, resource):
-        return [entity.get_waiting_time_for_resource(resource) for entity in self._get_disposed_entities()]
-    
-    def get_processing_times_for_resource(self, resource):
-        return [entity.get_processing_time_for_resource(resource) for entity in self._get_disposed_entities()]
     
     def start(self, debug=False):
         self._configure_debug(debug)
+        self._initialize_stats()
         for arrival_time, entity in self.next_entity():
             yield arrival_time # wait for the next entity to appear
             Debug.info(entity)
@@ -328,13 +402,13 @@ class Source:
     
     # private methods
     
+    def _initialize_stats(self):
+        Stats()
+    
     def _configure_debug(self, debug):
         Debug.DEBUG = debug
         if Debug.DEBUG:
             print("Debug is Enabled")
-    
-    def _get_disposed_entities(self):
-        return [entity for entity in self.entities if entity.is_disposed()]
     
     def _interarrival_time_generator(self):
         # if first_creation exists, emit it as the first time, else just use the interarrival_time
