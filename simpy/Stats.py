@@ -7,7 +7,6 @@ import numpy as np
 
 from collections import OrderedDict
 
-
 class Debug:
     DEBUG = False
     @staticmethod
@@ -95,7 +94,7 @@ class ResourceStatsMixin:
         self.queue_size.append((self.env.now, len(self.queue), event))
     
 
-
+# all resources are priority resources
 class Resource(ResourceStatsMixin, simpy.PriorityResource):
     pass
 
@@ -185,8 +184,8 @@ class Entity:
         time that the entity spent being processed by a particular resource
         """
         return self._calculate_processing_time_for_resource(resource.name)
-
-    def request_resource(self, resource, priority_override=None):
+    
+    def wait_for_resource(self, resource, priority_override=None):
         """
         The time that a resource is requested
         should be logged as the "arrival time" for the resource.
@@ -200,7 +199,7 @@ class Entity:
         self.resources_requested[resource.name]['request'] = request
         return request
     
-    def start_service_at_resource(self, resource):
+    def process_at_resource(self, resource):
         Debug.info(f'{self.name} started processing at {resource.name} : {self.env.now}')        
         self.resources_requested[resource.name]["start_service_time"].append(self.env.now)
         resource.add_resource_check()
