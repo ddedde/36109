@@ -116,11 +116,13 @@ class Stats:
 
     def _get_waiting_times_for_resource(self, resource, attributes):
         filtered_entities = self._filter_entities(attributes)
-        return [entity.get_waiting_time_for_resource(resource) for entity in filtered_entities]
+        waiting_times = [entity.get_waiting_time_for_resource(resource) for entity in filtered_entities]
+        return [time for time in waiting_times if time is not None]
     
     def _get_processing_times_for_resource(self, resource, attributes):
         filtered_entities = self._filter_entities(attributes)
-        return [entity.get_processing_time_for_resource(resource) for entity in filtered_entities]
+        processing_times = [entity.get_processing_time_for_resource(resource) for entity in filtered_entities]
+        return [time for time in processing_times if time is not None]
 
     def _get_disposed_entities(self):
         return [entity for entity in Stats.summary.entities if entity.is_disposed()]
