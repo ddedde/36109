@@ -30,7 +30,12 @@ class Stats:
         Stats.summary = self
     
     # Entity Stats Methods
-
+    
+    @staticmethod
+    def get_entities():
+        Stats._check_for_instance_or_raise()
+        return Stats.summary._get_disposed_entities()
+    
     @staticmethod
     def get_total_times(attributes=None):
         Stats._check_for_instance_or_raise()
