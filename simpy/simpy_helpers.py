@@ -431,6 +431,12 @@ class Source:
             p = self.env.process(entity.process())
             p.callbacks.append(self._dispose(entity)) # disposal happens automatically
     
+    def get_build_count(self):
+        """
+        Returns the current build_count for the entity class. 
+        """
+        return self.count
+    
     # private methods
     
     def _initialize_stats(self):
