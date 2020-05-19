@@ -69,7 +69,8 @@ class Stats:
             tracked_resource = Stats.summary.resources[resource.name]
             return tracked_resource.queue_size_over_time(sample_frequency)
         except KeyError:
-            raise Exception(f"Resource {resource.name} was not visited during simulation")
+            # resource wasn't visited, return a list of zeros
+            return resource._zeros(sample_frequency)
     
     @staticmethod
     def utilization_over_time(resource, sample_frequency=1):
@@ -78,7 +79,8 @@ class Stats:
             tracked_resource = Stats.summary.resources[resource.name]
             return tracked_resource.utilization_over_time(sample_frequency)
         except KeyError:
-            raise Exception(f"Resource {resource.name} was not visited during simulation")
+            # resource wasn't visited, return a list of zeros
+            return resource._zeros(sample_frequency)
 
     @staticmethod
     def number_being_processed_over_time(resource, sample_frequency=1):
@@ -87,7 +89,8 @@ class Stats:
             tracked_resource = Stats.summary.resources[resource.name]
             return tracked_resource.number_being_processed_over_time(sample_frequency)
         except KeyError:
-            raise Exception(f"Resource {resource.name} was not visited during simulation")
+            # resource wasn't visited, return a list of zeros
+            return resource._zeros(sample_frequency)
     
     @staticmethod
     def _add_resource(resource):
@@ -137,12 +140,11 @@ class ResourceStatsMixin:
         .1: 1,
         1: 0
     }
-    
+
     @staticmethod
     def _over_time(env, event_list, sample_frequency):
         if sample_frequency not in ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES:
             raise NotImplementedError(f"You must pick a sample frequency in the list {ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES}")
-
         decimals = ResourceStatsMixin.DECIMAL_MAP[sample_frequency] 
         rounded_event_list = ResourceStatsMixin._rounded_event_list(event_list, decimals)
         current_size = 0
@@ -206,6 +208,16 @@ class ResourceStatsMixin:
     def add_resource_check(self, event='start'):
         self.utilization_size.append((self.env.now, self.count, event))
         self.queue_size.append((self.env.now, len(self.queue), event))
+    
+    def now(self):
+        return self.env.now
+    
+    # private
+    def _zeros(self, sample_frequency):
+        if sample_frequency not in ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES:
+            raise NotImplementedError(f"You must pick a sample frequency in the list {ResourceStatsMixin.VALID_SAMPLE_FREQUENCIES}")
+        decimals = ResourceStatsMixin.DECIMAL_MAP[sample_frequency] 
+        return [0 for _ in np.around(np.arange(0, self.env.now, sample_frequency), decimals)]
     
 
 # all resources are priority resources
@@ -350,6 +362,9 @@ class Entity:
     
     def did_visit_resource(self, resource_name):
         return resource_name in self.resources_requested
+    
+    def now(self):
+        return self.env.now
 
     def _calculate_waiting_time_for_resource(self, resource_name):
         if not self.did_visit_resource(resource_name):
@@ -433,9 +448,12 @@ class Source:
     
     def get_build_count(self):
         """
-        Returns the current build_count for the entity class. 
+        Returns the current build_count. 
         """
         return self.count
+    
+    def now(self):
+        return self.env.now
     
     # private methods
     
